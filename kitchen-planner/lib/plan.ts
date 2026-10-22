@@ -18,6 +18,13 @@ export type BuyLine = {
   cost: number | null; // null when the ingredient isn't in the stock list
   inStockList: boolean;
 };
+// How much of one ingredient the planned dishes need, and which dishes it goes to.
+export type DemandLine = {
+  ingredient: string;
+  unit: string;
+  total: number;
+  parts: { dish: string; amount: number }[];
+};
 export type RiskLine = {
   ingredient: string;
   unit: string;
@@ -34,6 +41,7 @@ export type Plan = {
   ingredientCount: number;
   prep: PrepLine[];
   buy: BuyLine[];
+  demand: DemandLine[];
   risks: RiskLine[];
   warnings: string[];
   totalBuyCost: number;
@@ -76,17 +84,29 @@ export function buildPlan(
   }
 
   // Buy list: ingredients needed for the prep quantities.
-  const need = new Map<string, { name: string; amount: number }>();
+  const need = new Map<string, { name: string; amount: number; parts: { dish: string; amount: number }[] }>();
   for (const p of prep) {
     const items = recipes.get(normalizeName(p.dish));
     if (!items) continue;
     for (const it of items) {
       const k = normalizeName(it.ingredient);
-      const cur = need.get(k) ?? { name: it.ingredient, amount: 0 };
-      cur.amount += it.amount * p.prep;
+      const cur = need.get(k) ?? { name: it.ingredient, amount: 0, parts: [] };
+      const amount = it.amount * p.prep;
+      cur.amount += amount;
+      const part = cur.parts.find((x) => x.dish === p.dish);
+      if (part) part.amount += amount;
+      else cur.parts.push({ dish: p.dish, amount });
       need.set(k, cur);
     }
   }
+  const demand: DemandLine[] = [...need.entries()]
+    .map(([k, n]) => ({
+      ingredient: stockByKey.get(k)?.ingredient ?? n.name,
+      unit: stockByKey.get(k)?.unit ?? "",
+      total: n.amount,
+      parts: n.parts,
+    }))
+    .sort((a, b) => b.total - a.total);
   const buy: BuyLine[] = [];
   for (const [k, n] of need) {
     const s = stockByKey.get(k);
@@ -144,6 +164,7 @@ export function buildPlan(
     ingredientCount: stock.length,
     prep,
     buy,
+    demand,
     risks,
     warnings,
     totalBuyCost: buy.reduce((t, b) => t + (b.cost ?? 0), 0),

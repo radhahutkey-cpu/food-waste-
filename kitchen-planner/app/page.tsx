@@ -10,6 +10,7 @@ import { planToCsv } from "@/lib/export";
 import { loadSaved, save } from "@/lib/storage";
 import { Card, Table, download, r1, rupees } from "@/components/ui";
 import { StockTracker } from "@/components/StockTracker";
+import { DemandChart } from "@/components/DemandChart";
 import { WasteLog } from "@/components/WasteLog";
 
 const STOCK_KEY = "kitchen-planner-stock-v1";
@@ -329,6 +330,8 @@ function Results({ plan, note }: { plan: Plan; note: Note }) {
           rows={plan.prep.map((p) => [p.dish, r1(p.expected), <b key="p">{p.prep}</b>])}
         />
       </Card>
+
+      <DemandChart plan={plan} />
 
       <Card title="What to buy">
         <Table
