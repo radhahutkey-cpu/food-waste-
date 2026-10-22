@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Food Waste Tracker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Food Waste Tracker</h1>
+    <p class="sub">Log what you throw away and see how much adds up.</p>
+
+    <form id="form">
+      <input id="item" placeholder="Food item" required>
+      <input id="qty" type="number" min="0.1" step="0.1" placeholder="Weight (kg)" required>
+      <button>Add</button>
+    </form>
+
+    <p id="total">Total wasted: 0 kg</p>
+    <ul id="list"></ul>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
