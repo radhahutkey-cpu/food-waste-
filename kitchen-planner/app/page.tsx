@@ -4,9 +4,16 @@ import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { parseRecipes, parseSales, parseStock, RECIPE_HELP, SALES_HELP, STOCK_HELP, StockItem } from "@/lib/input";
 import { buildPlan, Plan } from "@/lib/plan";
 import { SAMPLE_RECIPES, SAMPLE_STOCK, sampleSales } from "@/lib/sample";
-import { REASONS, Reason, summarizeWaste, WasteEntry, entryCost } from "@/lib/waste";
-import { planToCsv, wasteToCsv } from "@/lib/export";
-import { toIso } from "@/lib/forecast";
+import { WasteEntry, isWasteList } from "@/lib/waste";
+import { Batch, isBatchList, sampleBatches, stockItemsToText, summarizeStock, toPlannerStock } from "@/lib/inventory";
+import { planToCsv } from "@/lib/export";
+import { loadSaved, save } from "@/lib/storage";
+import { Card, Table, download, r1, rupees } from "@/components/ui";
+import { StockTracker } from "@/components/StockTracker";
+import { WasteLog } from "@/components/WasteLog";
+
+const STOCK_KEY = "kitchen-planner-stock-v1";
+const WASTE_KEY = "kitchen-planner-waste-v2";
 
 type Errors = { sales: string[]; stock: string[]; recipes: string[] };
 const NO_ERRORS: Errors = { sales: [], stock: [], recipes: [] };
@@ -16,23 +23,12 @@ type Note =
   | { status: "ok"; note: string }
   | { status: "blocked"; reason: string }
   | { status: "unavailable"; message: string };
+type Tab = "stock" | "plan" | "waste";
 
 const MAX_FILE_BYTES = 1_000_000;
-const r1 = (n: number) => Math.round(n * 10) / 10;
-const rupees = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
-
-function download(name: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 const noSubscribe = () => () => {};
 
-// The sample data and the log date use today's date, so the planner is drawn only in the browser.
+// The sample data and today's date are used on first load, so the planner is drawn only in the browser.
 export default function Home() {
   const inBrowser = useSyncExternalStore(noSubscribe, () => true, () => false);
   if (!inBrowser) return <p className="p-6 text-zinc-600">Loading...</p>;
@@ -40,17 +36,49 @@ export default function Home() {
 }
 
 function Planner() {
+  const [tab, setTab] = useState<Tab>("stock");
+  // Saved between visits in this browser. First visit starts with sample stock so the screen is not empty.
+  const [batches, setBatches] = useState<Batch[]>(() => loadSaved(STOCK_KEY, sampleBatches(), isBatchList));
+  const [waste, setWaste] = useState<WasteEntry[]>(() => loadSaved(WASTE_KEY, [], isWasteList));
+  const [saveFailed, setSaveFailed] = useState(false);
+
   const [salesText, setSalesText] = useState(() => sampleSales());
   const [stockText, setStockText] = useState(SAMPLE_STOCK);
   const [recipeText, setRecipeText] = useState(SAMPLE_RECIPES);
+  const [stockInfo, setStockInfo] = useState("");
   const [errors, setErrors] = useState<Errors>(NO_ERRORS);
   const [fileError, setFileError] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
   const [note, setNote] = useState<Note>({ status: "idle" });
-  const [stockForLog, setStockForLog] = useState<StockItem[]>([]);
-  const [waste, setWaste] = useState<WasteEntry[]>([]);
-  const nextId = useRef(1);
   const runId = useRef(0);
+
+  function updateBatches(next: Batch[]) {
+    setBatches(next);
+    if (!save(STOCK_KEY, next)) setSaveFailed(true);
+  }
+  function updateWaste(next: WasteEntry[]) {
+    setWaste(next);
+    if (!save(WASTE_KEY, next)) setSaveFailed(true);
+  }
+  function addWaste(entries: Omit<WasteEntry, "id">[]) {
+    if (!entries.length) return;
+    let id = waste.reduce((m, e) => Math.max(m, e.id), 0);
+    updateWaste([...waste, ...entries.map((e) => ({ ...e, id: ++id }))]);
+  }
+
+  // Prices for the waste log: tracked stock first, then whatever is in the planner's stock box.
+  const priceList: StockItem[] = useMemo(() => {
+    const tracked = summarizeStock(batches, new Date()).map((r) => ({
+      ingredient: r.ingredient,
+      unit: r.unit,
+      onHand: r.freshQty,
+      daysToExpiry: r.daysToNearest,
+      costPerUnit: r.avgCost,
+    }));
+    const parsed = parseStock(stockText);
+    const extra = parsed.ok ? parsed.data.filter((s) => !tracked.some((t) => t.ingredient.toLowerCase() === s.ingredient.toLowerCase())) : [];
+    return [...tracked, ...extra];
+  }, [batches, stockText]);
 
   function loadSample() {
     setSalesText(sampleSales());
@@ -58,6 +86,17 @@ function Planner() {
     setRecipeText(SAMPLE_RECIPES);
     setErrors(NO_ERRORS);
     setFileError("");
+    setStockInfo("");
+  }
+
+  function useTrackedStock() {
+    const items = toPlannerStock(batches, new Date());
+    if (!items.length) {
+      setStockInfo("You have no unexpired stock tracked yet. Add deliveries on the Stock tab first.");
+      return;
+    }
+    setStockText(stockItemsToText(items));
+    setStockInfo(`Filled in ${items.length} ingredient${items.length === 1 ? "" : "s"} from your tracked stock. Expired stock is left out, and each ingredient uses its soonest expiry date.`);
   }
 
   async function onFile(file: File | undefined) {
@@ -79,19 +118,17 @@ function Planner() {
     const s = parseSales(salesText);
     const st = parseStock(stockText);
     const r = parseRecipes(recipeText);
-    const next: Errors = {
+    setErrors({
       sales: s.ok ? [] : s.errors,
       stock: st.ok ? [] : st.errors,
       recipes: r.ok ? [] : r.errors,
-    };
-    setErrors(next);
+    });
     if (!s.ok || !st.ok || !r.ok) {
       setPlan(null); // no plan when the input is bad
       return;
     }
     const p = buildPlan(s.data, r.data, st.data);
     setPlan(p);
-    setStockForLog(st.data);
 
     // The plan is already on screen. The AI note arrives afterwards and can fail without affecting it.
     setNote({ status: "loading" });
@@ -123,59 +160,100 @@ function Planner() {
       <header>
         <h1 className="text-3xl font-bold tracking-tight">Kitchen Planner</h1>
         <p className="mt-1 max-w-prose text-zinc-600">
-          Paste your last 2 weeks of sales and what is in stock. Get tomorrow&apos;s prep list, buy list and waste alerts.
-          The sample below is a made-up North Indian menu. Replace it with yours.
+          Track what is in your kitchen and when it expires, plan tomorrow&apos;s prep and purchases, and see where food is wasted. The data shown starts as a made-up North Indian menu. Replace it with yours.
         </p>
       </header>
 
-      <section className="flex flex-col gap-4 rounded-lg border border-zinc-300 bg-white p-4">
-        <div className="flex items-baseline justify-between gap-3">
-          <h2 className="text-lg font-semibold">1. Your data</h2>
-          <button type="button" onClick={loadSample} className="text-sm text-brand underline">
-            Load sample data
+      <nav role="tablist" aria-label="Sections" className="flex gap-1 border-b border-zinc-300">
+        {([["stock", "Stock"], ["plan", "Plan tomorrow"], ["waste", `Waste log${waste.length ? ` (${waste.length})` : ""}`]] as [Tab, string][]).map(([id, label]) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={`-mb-px rounded-t-md border border-b-0 px-4 py-2 text-sm font-semibold ${tab === id ? "border-zinc-300 bg-white text-brand" : "border-transparent text-zinc-600 hover:text-foreground"}`}
+          >
+            {label}
           </button>
-        </div>
+        ))}
+      </nav>
 
-        <Field
-          id="sales"
-          label="Sales, last 2 weeks"
-          help={SALES_HELP}
-          value={salesText}
-          onChange={setSalesText}
-          errors={[...(fileError ? [fileError] : []), ...errors.sales]}
-          rows={7}
-          extra={
-            <label className="text-sm text-brand underline cursor-pointer">
-              Upload a .csv instead
-              <input type="file" accept=".csv,.txt,text/csv,text/plain" className="sr-only" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
-            </label>
-          }
+      {saveFailed && (
+        <p role="alert" className="rounded-md border-l-4 border-amber-600 bg-amber-50 p-3 text-sm text-amber-900">
+          This browser would not save your changes (a private window or blocked storage). They will be lost when you close the page. Use Download (.csv) to keep a copy.
+        </p>
+      )}
+
+      {tab === "stock" && <StockTracker batches={batches} onBatches={updateBatches} onWaste={addWaste} />}
+
+      {tab === "plan" && (
+        <>
+          <section className="flex flex-col gap-4 rounded-lg border border-zinc-300 bg-white p-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="text-lg font-semibold">Your data</h2>
+              <button type="button" onClick={loadSample} className="text-sm text-brand underline">
+                Load sample data
+              </button>
+            </div>
+
+            <Field
+              id="sales"
+              label="Sales, last 2 weeks"
+              help={SALES_HELP}
+              value={salesText}
+              onChange={setSalesText}
+              errors={[...(fileError ? [fileError] : []), ...errors.sales]}
+              rows={7}
+              extra={
+                <label className="cursor-pointer text-sm text-brand underline">
+                  Upload a .csv instead
+                  <input type="file" accept=".csv,.txt,text/csv,text/plain" className="sr-only" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
+                </label>
+              }
+            />
+            <Field
+              id="stock"
+              label="Stock now"
+              help={STOCK_HELP}
+              value={stockText}
+              onChange={(v) => { setStockText(v); setStockInfo(""); }}
+              errors={errors.stock}
+              info={stockInfo}
+              rows={6}
+              extra={
+                <button type="button" onClick={useTrackedStock} className="text-sm text-brand underline">
+                  Use my tracked stock
+                </button>
+              }
+            />
+            <Field id="recipes" label="Recipes" help={RECIPE_HELP} value={recipeText} onChange={setRecipeText} errors={errors.recipes} rows={6} />
+
+            <button
+              type="button"
+              onClick={makePlan}
+              className="self-start rounded-md bg-brand px-5 py-2.5 font-semibold text-white hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+            >
+              Make tomorrow&apos;s plan
+            </button>
+          </section>
+
+          {plan && <Results plan={plan} note={note} />}
+        </>
+      )}
+
+      {tab === "waste" && (
+        <WasteLog
+          entries={waste}
+          stock={priceList}
+          onAdd={(e) => addWaste([e])}
+          onRemove={(id) => updateWaste(waste.filter((x) => x.id !== id))}
+          onClear={() => updateWaste([])}
         />
-        <Field id="stock" label="Stock now" help={STOCK_HELP} value={stockText} onChange={setStockText} errors={errors.stock} rows={6} />
-        <Field id="recipes" label="Recipes" help={RECIPE_HELP} value={recipeText} onChange={setRecipeText} errors={errors.recipes} rows={6} />
-
-        <button
-          type="button"
-          onClick={makePlan}
-          className="self-start rounded-md bg-brand px-5 py-2.5 font-semibold text-white hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
-        >
-          Make tomorrow&apos;s plan
-        </button>
-      </section>
-
-      {plan && <Results plan={plan} note={note} />}
-
-      <WasteLog
-        entries={waste}
-        stock={stockForLog}
-        onAdd={(e) => setWaste((w) => [...w, { ...e, id: nextId.current++ }])}
-        onRemove={(id) => setWaste((w) => w.filter((x) => x.id !== id))}
-        onClear={() => setWaste([])}
-      />
+      )}
 
       <footer className="max-w-prose text-sm text-zinc-600">
-        Forecasts use recent sales on the same weekday, with newer days counting more. They don&apos;t know about events,
-        weather or offers. Nothing is saved when you close this page, so download what you want to keep.
+        Forecasts use recent sales on the same weekday, with newer days counting more. They don&apos;t know about events, weather or offers. Stock and waste entries are saved in this browser on this device only.
       </footer>
     </main>
   );
@@ -190,6 +268,7 @@ function Field(props: {
   errors: string[];
   rows: number;
   extra?: React.ReactNode;
+  info?: string;
 }) {
   const bad = props.errors.length > 0;
   return (
@@ -213,6 +292,7 @@ function Field(props: {
         aria-invalid={bad}
         className={`w-full resize-y rounded-md border bg-zinc-50 p-2 font-mono text-[13px] leading-5 ${bad ? "border-red-600" : "border-zinc-300"}`}
       />
+      {props.info && <p role="status" className="text-sm text-emerald-900">{props.info}</p>}
       {bad && (
         <ul role="alert" className="rounded-md border-l-4 border-red-600 bg-red-50 p-3 text-sm text-red-900">
           {props.errors.map((e, i) => (
@@ -221,47 +301,6 @@ function Field(props: {
         </ul>
       )}
     </div>
-  );
-}
-
-function Table(props: { head: { label: string; num?: boolean }[]; rows: React.ReactNode[][] }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-sm tabular-nums">
-        <thead>
-          <tr>
-            {props.head.map((h) => (
-              <th key={h.label} className={`border-b border-zinc-300 px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-600 ${h.num ? "text-right" : "text-left"}`}>
-                {h.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {props.rows.map((row, i) => (
-            <tr key={i}>
-              {row.map((cell, j) => (
-                <td key={j} className={`whitespace-nowrap border-b border-zinc-200 px-2 py-1.5 ${props.head[j].num ? "text-right" : "text-left"}`}>
-                  {cell}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function Card(props: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
-  return (
-    <section className="flex flex-col gap-3 rounded-lg border border-zinc-300 bg-white p-4">
-      <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-lg font-semibold">{props.title}</h2>
-        {props.action}
-      </div>
-      {props.children}
-    </section>
   );
 }
 
@@ -346,119 +385,5 @@ function NoteCard({ note }: { note: Note }) {
         <p className="mt-1 text-sm text-zinc-700">Note unavailable. {note.message} The plan above is not affected.</p>
       )}
     </section>
-  );
-}
-
-function WasteLog(props: {
-  entries: WasteEntry[];
-  stock: StockItem[];
-  onAdd: (e: Omit<WasteEntry, "id">) => void;
-  onRemove: (id: number) => void;
-  onClear: () => void;
-}) {
-  const [date, setDate] = useState(() => toIso(new Date()));
-  const [ingredient, setIngredient] = useState("");
-  const [qty, setQty] = useState("");
-  const [reason, setReason] = useState<Reason>(REASONS[0]);
-  const [msg, setMsg] = useState("");
-  const [armed, setArmed] = useState(false);
-  const summary = useMemo(() => summarizeWaste(props.entries, props.stock), [props.entries, props.stock]);
-  const max = Math.max(1, ...summary.byReason.map((b) => b.cost));
-
-  function submit(ev: React.FormEvent) {
-    ev.preventDefault();
-    const n = Number(qty);
-    if (!ingredient.trim()) return setMsg("Write which ingredient was thrown away.");
-    if (!qty.trim() || !Number.isFinite(n) || n <= 0) return setMsg("Write the amount as a number more than zero, like 1.5.");
-    setMsg("");
-    props.onAdd({ date, ingredient: ingredient.trim(), qty: n, reason });
-    setQty("");
-  }
-
-  return (
-    <Card
-      title="Waste log"
-      action={
-        props.entries.length > 0 && (
-          <span className="flex gap-3 text-sm">
-            <button type="button" className="text-brand underline" onClick={() => download("waste-log.csv", wasteToCsv(props.entries, props.stock))}>
-              Download (.csv)
-            </button>
-            <button
-              type="button"
-              className="text-brand underline"
-              onClick={() => {
-                if (armed) {
-                  props.onClear();
-                  setArmed(false);
-                } else {
-                  setArmed(true);
-                  setTimeout(() => setArmed(false), 4000);
-                }
-              }}
-            >
-              {armed ? "Click again to delete all" : "Clear log"}
-            </button>
-          </span>
-        )
-      }
-    >
-      <p className="text-sm text-zinc-600">Write down food you throw away, and why. It shows where your money goes. Entries are kept only while this page is open.</p>
-      <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
-        <label className="flex flex-col text-sm">Date
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required className="rounded-md border border-zinc-300 bg-zinc-50 p-2" />
-        </label>
-        <label className="flex flex-col text-sm">Ingredient
-          <input list="stock-names" value={ingredient} onChange={(e) => setIngredient(e.target.value)} placeholder="e.g. paneer" className="w-36 rounded-md border border-zinc-300 bg-zinc-50 p-2" />
-          <datalist id="stock-names">{props.stock.map((s) => <option key={s.ingredient} value={s.ingredient} />)}</datalist>
-        </label>
-        <label className="flex flex-col text-sm">Amount
-          <input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" placeholder="1.5" className="w-20 rounded-md border border-zinc-300 bg-zinc-50 p-2" />
-        </label>
-        <label className="flex flex-col text-sm">Reason
-          <select value={reason} onChange={(e) => setReason(e.target.value as Reason)} className="rounded-md border border-zinc-300 bg-zinc-50 p-2">
-            {REASONS.map((r) => <option key={r}>{r}</option>)}
-          </select>
-        </label>
-        <button className="rounded-md bg-brand px-4 py-2 font-semibold text-white hover:brightness-110">Add</button>
-      </form>
-      {msg && <p role="alert" className="text-sm text-red-800">{msg}</p>}
-
-      {props.entries.length === 0 ? (
-        <p className="text-sm text-zinc-600">Nothing logged yet.</p>
-      ) : (
-        <>
-          <p className="font-semibold">Total wasted: {rupees(summary.total)}</p>
-          {summary.unknownCost > 0 && (
-            <p className="text-sm text-amber-900">
-              {summary.unknownCost} entr{summary.unknownCost === 1 ? "y has" : "ies have"} no rupee value because the ingredient isn&apos;t in your stock list (click Make tomorrow&apos;s plan after adding it).
-            </p>
-          )}
-          <Table
-            head={[{ label: "Reason" }, { label: "Entries", num: true }, { label: "" }, { label: "Cost", num: true }]}
-            rows={summary.byReason.map((b) => [
-              b.reason,
-              b.entries,
-              <span key="bar" className="inline-block h-2.5 rounded bg-brand align-middle" style={{ width: `${Math.max(4, (b.cost / max) * 140)}px` }} />,
-              rupees(b.cost),
-            ])}
-          />
-          <Table
-            head={[{ label: "Date" }, { label: "Ingredient" }, { label: "Amount", num: true }, { label: "Reason" }, { label: "Cost", num: true }, { label: "" }]}
-            rows={[...props.entries].reverse().map((e) => {
-              const c = entryCost(e, props.stock);
-              return [
-                e.date,
-                e.ingredient,
-                e.qty,
-                e.reason,
-                c === null ? "unknown" : rupees(c),
-                <button key="x" type="button" className="text-brand underline" onClick={() => props.onRemove(e.id)}>remove</button>,
-              ];
-            })}
-          />
-        </>
-      )}
-    </Card>
   );
 }

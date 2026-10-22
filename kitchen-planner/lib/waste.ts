@@ -18,7 +18,24 @@ export type WasteEntry = {
   ingredient: string;
   qty: number;
   reason: Reason;
+  costPerUnit?: number; // set when the entry came from stock tracking, so it has a known cost
 };
+
+export function isWasteList(v: unknown): v is WasteEntry[] {
+  return (
+    Array.isArray(v) &&
+    v.every(
+      (e) =>
+        e &&
+        typeof e.id === "number" &&
+        typeof e.date === "string" &&
+        typeof e.ingredient === "string" &&
+        typeof e.qty === "number" &&
+        (REASONS as readonly string[]).includes(e.reason) &&
+        (e.costPerUnit === undefined || typeof e.costPerUnit === "number")
+    )
+  );
+}
 
 export type ReasonTotal = { reason: Reason; entries: number; cost: number };
 export type WasteSummary = {
@@ -28,6 +45,7 @@ export type WasteSummary = {
 };
 
 export function entryCost(e: WasteEntry, stock: StockItem[]): number | null {
+  if (e.costPerUnit !== undefined) return e.qty * e.costPerUnit;
   const s = stock.find((x) => normalizeName(x.ingredient) === normalizeName(e.ingredient));
   return s ? e.qty * s.costPerUnit : null;
 }

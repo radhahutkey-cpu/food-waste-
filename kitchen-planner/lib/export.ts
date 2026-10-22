@@ -1,6 +1,7 @@
 // CSV download helpers, so owners can keep results without accounts or saved data.
 
 import { StockItem } from "./input";
+import { Batch } from "./inventory";
 import { Plan } from "./plan";
 import { WasteEntry, entryCost } from "./waste";
 
@@ -33,6 +34,13 @@ export function planToCsv(plan: Plan): string {
     ["WASTE RISK"],
     ["Ingredient", "Unit", "On hand", "Days to expiry", "Likely unused", "Value at risk (Rs)"],
     ...plan.risks.map((r) => [r.ingredient, r.unit, r1(r.onHand), r.daysToExpiry, r1(r.unused), Math.round(r.value)]),
+  ]);
+}
+
+export function stockToCsv(batches: Batch[]): string {
+  return toCsv([
+    ["Ingredient", "Unit", "Quantity", "Expiry", "Cost per unit (Rs)", "Received"],
+    ...batches.map((b) => [b.ingredient, b.unit, b.qty, b.expiry, b.costPerUnit, b.received]),
   ]);
 }
 
