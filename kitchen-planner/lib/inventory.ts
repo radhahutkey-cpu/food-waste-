@@ -220,7 +220,8 @@ export function stockItemsToText(items: StockItem[]): string {
 }
 
 // Made-up starting stock, with dates relative to today so alerts always show.
-export function sampleBatches(today: Date = new Date()): Batch[] {
+// startId lets the sample's ids sit above any existing ones, so loading it replaces them cleanly.
+export function sampleBatches(today: Date = new Date(), startId = 1): Batch[] {
   const rows: [string, string, number, number, number][] = [
     // ingredient, unit, qty, days until expiry, cost per unit
     ["paneer", "kg", 4, 3, 380],
@@ -235,7 +236,7 @@ export function sampleBatches(today: Date = new Date()): Batch[] {
     ["curd", "kg", 2, -1, 70],
   ];
   return rows.map(([ingredient, unit, qty, days, cost], i) => ({
-    id: i + 1,
+    id: startId + i,
     ingredient,
     unit,
     qty,

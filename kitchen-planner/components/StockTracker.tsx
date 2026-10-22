@@ -6,6 +6,7 @@ import {
   StockRow,
   discardExpired,
   isExpired,
+  nextBatchId,
   receiveStock,
   sampleBatches,
   stockTotals,
@@ -98,7 +99,7 @@ export function StockTracker(props: {
                 Download (.csv)
               </button>
             )}
-            <button type="button" className="text-brand underline" onClick={() => arm("sample", () => props.onBatches(sampleBatches()))}>
+            <button type="button" className="text-brand underline" onClick={() => arm("sample", () => props.onBatches(sampleBatches(new Date(), nextBatchId(batches))))}>
               {armed === "sample" ? "Click again to replace with sample" : "Load sample stock"}
             </button>
             {batches.length > 0 && (
@@ -146,7 +147,7 @@ export function StockTracker(props: {
             </details>
           </>
         )}
-        <p className="text-xs text-zinc-600">Stock is saved in this browser on this device only. Download the .csv to keep a copy.</p>
+        <p className="text-xs text-zinc-600">Your stock is saved to your account, so it is here on any device you log in from. Download the .csv for your own copy.</p>
       </Card>
 
       <div className="grid gap-4 md:grid-cols-2">

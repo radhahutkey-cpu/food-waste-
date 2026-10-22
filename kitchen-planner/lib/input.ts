@@ -74,6 +74,14 @@ function tooLong(n: number, got: number, need: number, help: string): string {
   return `Line ${n} has ${got} part${got === 1 ? "" : "s"} but needs ${need}, separated by commas. ${help}`;
 }
 
+// Turns saved rows back into the text boxes' format.
+export function salesToText(rows: SalesRow[]): string {
+  return rows.map((r) => `${r.date}, ${r.dish}, ${r.qty}`).join("\n");
+}
+export function recipesToText(lines: RecipeLine[]): string {
+  return lines.map((l) => `${l.dish}, ${l.ingredient}, ${l.amount}`).join("\n");
+}
+
 export function parseSales(text: string): Parsed<SalesRow[]> {
   const lines = splitLines(text, /^(date|day)$/i);
   if (!lines.length) return { ok: false, errors: [`Paste your last 2 weeks of sales. ${SALES_HELP}`] };

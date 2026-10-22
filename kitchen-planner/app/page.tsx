@@ -1,20 +1,18 @@
 "use client";
 
-import { useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { parseRecipes, parseSales, parseStock, RECIPE_HELP, SALES_HELP, STOCK_HELP, StockItem } from "@/lib/input";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { parseRecipes, parseSales, parseStock, recipesToText, salesToText, RECIPE_HELP, SALES_HELP, STOCK_HELP, StockItem } from "@/lib/input";
 import { buildPlan, Plan } from "@/lib/plan";
 import { SAMPLE_RECIPES, SAMPLE_STOCK, sampleSales } from "@/lib/sample";
-import { WasteEntry, isWasteList } from "@/lib/waste";
-import { Batch, isBatchList, sampleBatches, stockItemsToText, summarizeStock, toPlannerStock } from "@/lib/inventory";
+import { WasteEntry } from "@/lib/waste";
+import { Batch, stockItemsToText, summarizeStock, toPlannerStock } from "@/lib/inventory";
 import { planToCsv } from "@/lib/export";
-import { loadSaved, save } from "@/lib/storage";
+import { loadAccountData, loadBatches, loadWaste, persistBatches, persistWaste, saveRecipes, saveSales } from "@/lib/db";
 import { Card, Table, download, r1, rupees } from "@/components/ui";
-import { StockTracker } from "@/components/StockTracker";
+import { AuthGate } from "@/components/AuthGate";
 import { DemandChart } from "@/components/DemandChart";
+import { StockTracker } from "@/components/StockTracker";
 import { WasteLog } from "@/components/WasteLog";
-
-const STOCK_KEY = "kitchen-planner-stock-v1";
-const WASTE_KEY = "kitchen-planner-waste-v2";
 
 type Errors = { sales: string[]; stock: string[]; recipes: string[] };
 const NO_ERRORS: Errors = { sales: [], stock: [], recipes: [] };
@@ -29,42 +27,103 @@ type Tab = "stock" | "plan" | "waste";
 const MAX_FILE_BYTES = 1_000_000;
 const noSubscribe = () => () => {};
 
-// The sample data and today's date are used on first load, so the planner is drawn only in the browser.
+// Drawn only in the browser: sign-in state and today's date only exist there.
 export default function Home() {
   const inBrowser = useSyncExternalStore(noSubscribe, () => true, () => false);
   if (!inBrowser) return <p className="p-6 text-zinc-600">Loading...</p>;
-  return <Planner />;
+  return <AuthGate>{(user) => <Planner email={user.email} onSignOut={user.signOut} />}</AuthGate>;
 }
 
-function Planner() {
-  const [tab, setTab] = useState<Tab>("stock");
-  // Saved between visits in this browser. First visit starts with sample stock so the screen is not empty.
-  const [batches, setBatches] = useState<Batch[]>(() => loadSaved(STOCK_KEY, sampleBatches(), isBatchList));
-  const [waste, setWaste] = useState<WasteEntry[]>(() => loadSaved(WASTE_KEY, [], isWasteList));
-  const [saveFailed, setSaveFailed] = useState(false);
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : "Something went wrong.";
+}
 
-  const [salesText, setSalesText] = useState(() => sampleSales());
-  const [stockText, setStockText] = useState(SAMPLE_STOCK);
-  const [recipeText, setRecipeText] = useState(SAMPLE_RECIPES);
+function Planner({ email, onSignOut }: { email: string; onSignOut: () => void }) {
+  const [tab, setTab] = useState<Tab>("stock");
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [retry, setRetry] = useState(0);
+  const [dbError, setDbError] = useState("");
+
+  const [batches, setBatches] = useState<Batch[]>([]);
+  const [waste, setWaste] = useState<WasteEntry[]>([]);
+  const savingBatches = useRef(false);
+  const savingWaste = useRef(false);
+
+  const [salesText, setSalesText] = useState("");
+  const [stockText, setStockText] = useState("");
+  const [recipeText, setRecipeText] = useState("");
+  const savedText = useRef({ sales: "", recipes: "" }); // what is already in the database
   const [stockInfo, setStockInfo] = useState("");
   const [errors, setErrors] = useState<Errors>(NO_ERRORS);
   const [fileError, setFileError] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
+  const [saveNote, setSaveNote] = useState("");
   const [note, setNote] = useState<Note>({ status: "idle" });
   const runId = useRef(0);
 
-  function updateBatches(next: Batch[]) {
+  // Load this account's saved data. A new account starts empty.
+  useEffect(() => {
+    let alive = true;
+    loadAccountData()
+      .then((d) => {
+        if (!alive) return;
+        setBatches(d.batches);
+        setWaste(d.waste);
+        const sales = salesToText(d.sales);
+        const recipes = recipesToText(d.recipes);
+        savedText.current = { sales, recipes };
+        setSalesText(sales);
+        setRecipeText(recipes);
+        setStockText(stockItemsToText(toPlannerStock(d.batches, new Date())));
+        setLoadError("");
+        setLoaded(true);
+      })
+      .catch((e) => alive && setLoadError(errorText(e)));
+    return () => {
+      alive = false;
+    };
+  }, [retry]);
+
+  // Saving: show the change at once, send it to the database, then reload so rows get their real ids.
+  async function updateBatches(next: Batch[]) {
+    if (savingBatches.current) return setDbError("Still saving your last change. Wait a second and try again.");
+    savingBatches.current = true;
+    const prev = batches;
     setBatches(next);
-    if (!save(STOCK_KEY, next)) setSaveFailed(true);
+    try {
+      setBatches(await persistBatches(prev, next));
+      setDbError("");
+    } catch (e) {
+      setDbError(`${errorText(e)} Your change was not saved.`);
+      try {
+        setBatches(await loadBatches());
+      } catch {}
+    } finally {
+      savingBatches.current = false;
+    }
   }
-  function updateWaste(next: WasteEntry[]) {
+  async function updateWaste(next: WasteEntry[]) {
+    if (savingWaste.current) return setDbError("Still saving your last change. Wait a second and try again.");
+    savingWaste.current = true;
+    const prev = waste;
     setWaste(next);
-    if (!save(WASTE_KEY, next)) setSaveFailed(true);
+    try {
+      setWaste(await persistWaste(prev, next));
+      setDbError("");
+    } catch (e) {
+      setDbError(`${errorText(e)} Your change was not saved.`);
+      try {
+        setWaste(await loadWaste());
+      } catch {}
+    } finally {
+      savingWaste.current = false;
+    }
   }
   function addWaste(entries: Omit<WasteEntry, "id">[]) {
     if (!entries.length) return;
     let id = waste.reduce((m, e) => Math.max(m, e.id), 0);
-    updateWaste([...waste, ...entries.map((e) => ({ ...e, id: ++id }))]);
+    void updateWaste([...waste, ...entries.map((e) => ({ ...e, id: ++id }))]);
   }
 
   // Prices for the waste log: tracked stock first, then whatever is in the planner's stock box.
@@ -116,6 +175,7 @@ function Planner() {
   async function makePlan() {
     const myRun = ++runId.current;
     setNote({ status: "idle" });
+    setSaveNote("");
     const s = parseSales(salesText);
     const st = parseStock(stockText);
     const r = parseRecipes(recipeText);
@@ -130,6 +190,16 @@ function Planner() {
     }
     const p = buildPlan(s.data, r.data, st.data);
     setPlan(p);
+
+    // Keep this account's sales and recipes for next time (only what changed).
+    const toSave: Promise<void>[] = [];
+    if (salesText !== savedText.current.sales) toSave.push(saveSales(s.data).then(() => void (savedText.current.sales = salesText)));
+    if (recipeText !== savedText.current.recipes) toSave.push(saveRecipes(r.data).then(() => void (savedText.current.recipes = recipeText)));
+    if (toSave.length) {
+      Promise.all(toSave)
+        .then(() => setSaveNote("Your sales and recipes are saved to your account."))
+        .catch((e) => setDbError(`${errorText(e)} Your sales or recipes were not saved, but the plan below is still correct.`));
+    }
 
     // The plan is already on screen. The AI note arrives afterwards and can fail without affecting it.
     setNote({ status: "loading" });
@@ -156,14 +226,42 @@ function Planner() {
     }
   }
 
+  const header = (
+    <header className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Kitchen Planner</h1>
+        <p className="mt-1 max-w-prose text-zinc-600">Track what is in your kitchen and when it expires, see where food is wasted, and plan tomorrow&apos;s prep and purchases.</p>
+      </div>
+      <div className="text-right text-sm">
+        <p className="text-zinc-600">{email}</p>
+        <button type="button" onClick={onSignOut} className="text-brand underline">
+          Log out
+        </button>
+      </div>
+    </header>
+  );
+
+  if (!loaded) {
+    return (
+      <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6">
+        {header}
+        {loadError ? (
+          <div role="alert" className="rounded-md border-l-4 border-red-600 bg-red-50 p-3 text-sm text-red-900">
+            <p>Could not load your data. {loadError}</p>
+            <button type="button" className="mt-2 font-semibold underline" onClick={() => { setLoadError(""); setRetry((n) => n + 1); }}>
+              Try again
+            </button>
+          </div>
+        ) : (
+          <p className="text-zinc-600">Loading your kitchen...</p>
+        )}
+      </main>
+    );
+  }
+
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6">
-      <header>
-        <h1 className="text-3xl font-bold tracking-tight">Kitchen Planner</h1>
-        <p className="mt-1 max-w-prose text-zinc-600">
-          Track what is in your kitchen and when it expires, plan tomorrow&apos;s prep and purchases, and see where food is wasted. The data shown starts as a made-up North Indian menu. Replace it with yours.
-        </p>
-      </header>
+      {header}
 
       <nav role="tablist" aria-label="Sections" className="flex gap-1 border-b border-zinc-300">
         {([["stock", "Stock"], ["plan", "Plan tomorrow"], ["waste", `Waste log${waste.length ? ` (${waste.length})` : ""}`]] as [Tab, string][]).map(([id, label]) => (
@@ -180,13 +278,14 @@ function Planner() {
         ))}
       </nav>
 
-      {saveFailed && (
-        <p role="alert" className="rounded-md border-l-4 border-amber-600 bg-amber-50 p-3 text-sm text-amber-900">
-          This browser would not save your changes (a private window or blocked storage). They will be lost when you close the page. Use Download (.csv) to keep a copy.
+      {dbError && (
+        <p role="alert" className="flex items-start justify-between gap-3 rounded-md border-l-4 border-red-600 bg-red-50 p-3 text-sm text-red-900">
+          <span>{dbError}</span>
+          <button type="button" className="underline" onClick={() => setDbError("")}>Dismiss</button>
         </p>
       )}
 
-      {tab === "stock" && <StockTracker batches={batches} onBatches={updateBatches} onWaste={addWaste} />}
+      {tab === "stock" && <StockTracker batches={batches} onBatches={(n) => void updateBatches(n)} onWaste={addWaste} />}
 
       {tab === "plan" && (
         <>
@@ -194,9 +293,14 @@ function Planner() {
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="text-lg font-semibold">Your data</h2>
               <button type="button" onClick={loadSample} className="text-sm text-brand underline">
-                Load sample data
+                Fill in sample data to try it
               </button>
             </div>
+            {!salesText && !recipeText && (
+              <p className="rounded-md bg-zinc-100 p-3 text-sm text-zinc-700">
+                New here? Paste your last 2 weeks of sales and your recipes below. Your stock fills in from the Stock tab. Or fill in sample data to see how it works.
+              </p>
+            )}
 
             <Field
               id="sales"
@@ -239,7 +343,7 @@ function Planner() {
             </button>
           </section>
 
-          {plan && <Results plan={plan} note={note} />}
+          {plan && <Results plan={plan} note={note} saveNote={saveNote} />}
         </>
       )}
 
@@ -248,13 +352,13 @@ function Planner() {
           entries={waste}
           stock={priceList}
           onAdd={(e) => addWaste([e])}
-          onRemove={(id) => updateWaste(waste.filter((x) => x.id !== id))}
-          onClear={() => updateWaste([])}
+          onRemove={(id) => void updateWaste(waste.filter((x) => x.id !== id))}
+          onClear={() => void updateWaste([])}
         />
       )}
 
       <footer className="max-w-prose text-sm text-zinc-600">
-        Forecasts use recent sales on the same weekday, with newer days counting more. They don&apos;t know about events, weather or offers. Stock and waste entries are saved in this browser on this device only.
+        Forecasts use recent sales on the same weekday, with newer days counting more. They don&apos;t know about events, weather or offers. Your data is saved to your account and is private to it.
       </footer>
     </main>
   );
@@ -305,7 +409,7 @@ function Field(props: {
   );
 }
 
-function Results({ plan, note }: { plan: Plan; note: Note }) {
+function Results({ plan, note, saveNote }: { plan: Plan; note: Note; saveNote: string }) {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-zinc-700" data-testid="read-summary">
@@ -314,6 +418,7 @@ function Results({ plan, note }: { plan: Plan; note: Note }) {
         <button type="button" onClick={() => download(`plan-${plan.planDate}.csv`, planToCsv(plan))} className="text-brand underline">
           Download plan (.csv)
         </button>
+        {saveNote && <span className="block text-emerald-900">{saveNote}</span>}
       </p>
 
       {plan.warnings.length > 0 && (

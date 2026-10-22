@@ -62,7 +62,7 @@ export function WasteLog(props: {
       }
     >
       <p className="text-sm text-zinc-600">
-        Write down food you throw away, and why. It shows where your money goes. Entries are saved in this browser. Waste marked in Stock out, and expired stock you discard, are added here for you. Adding a line here does not
+        Write down food you throw away, and why. It shows where your money goes. Entries are saved to your account. Waste marked in Stock out, and expired stock you discard, are added here for you. Adding a line here does not
         change your stock.
       </p>
       <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
