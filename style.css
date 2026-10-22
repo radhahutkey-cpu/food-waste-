@@ -1,11 +1,28 @@
-body { font-family: system-ui, sans-serif; background: #f4f8f1; margin: 0; color: #1f2d1f; }
-main { max-width: 520px; margin: 0 auto; padding: 24px 16px; }
-h1 { margin-bottom: 4px; }
-.sub { margin-top: 0; color: #556b55; }
-form { display: flex; gap: 8px; flex-wrap: wrap; }
-input { flex: 1 1 140px; padding: 8px; border: 1px solid #b7c9b7; border-radius: 6px; }
-button { padding: 8px 16px; border: 0; border-radius: 6px; background: #2f7d32; color: #fff; cursor: pointer; }
-#total { font-weight: 600; }
-ul { list-style: none; padding: 0; }
-li { display: flex; justify-content: space-between; background: #fff; padding: 8px 12px; margin-bottom: 6px; border-radius: 6px; }
-li button { background: #c0392b; padding: 2px 8px; }
+* { box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: #f6f3ec; color: #2b2a26; margin: 0; line-height: 1.45; }
+header, main, footer { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+header { padding-top: 24px; }
+h1 { margin: 0 0 4px; color: #8a4b08; }
+header p { margin-top: 0; color: #6b665b; }
+.card { background: #fff; border-radius: 10px; padding: 16px; margin: 16px 0; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+h2 { margin: 0 0 12px; font-size: 1.1rem; display: flex; justify-content: space-between; align-items: center; }
+label { display: block; font-weight: 600; margin-top: 12px; }
+label small { font-weight: 400; color: #7a7467; }
+textarea { width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 13px; padding: 8px; border: 1px solid #d6cfc0; border-radius: 6px; margin-top: 4px; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+input[type=date], input[type=number] { padding: 8px; border: 1px solid #d6cfc0; border-radius: 6px; }
+input[type=number] { width: 70px; }
+label.inline { display: flex; align-items: center; gap: 6px; margin: 0; font-weight: 400; }
+button { padding: 9px 18px; border: 0; border-radius: 6px; background: #b8620d; color: #fff; font-weight: 600; cursor: pointer; }
+button.link { background: none; color: #8a4b08; padding: 0; font-weight: 400; font-size: .85rem; text-decoration: underline; }
+.error { color: #b3261e; margin: 8px 0 0; min-height: 1em; }
+table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee8da; }
+th { color: #7a7467; font-weight: 600; font-size: .85rem; }
+td.num, th.num { text-align: right; }
+.alert { padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; border-left: 4px solid; }
+.alert.high { background: #fdecea; border-color: #b3261e; }
+.alert.med { background: #fff4e0; border-color: #d98a00; }
+.ok { color: #2e7d32; }
+.muted { color: #7a7467; }
+footer { color: #7a7467; font-size: .85rem; padding-bottom: 32px; }

@@ -3,23 +3,49 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Food Waste Tracker</title>
+  <title>Kitchen Planner</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <header>
+    <h1>Kitchen Planner</h1>
+    <p>Enter past sales, your menu and what's in stock. Get what to prep, what to buy, and what might go to waste.</p>
+  </header>
+
   <main>
-    <h1>Food Waste Tracker</h1>
-    <p class="sub">Log what you throw away and see how much adds up.</p>
+    <section class="card">
+      <h2>1. Your data <button id="reset" class="link">Reset to sample data</button></h2>
 
-    <form id="form">
-      <input id="item" placeholder="Food item" required>
-      <input id="qty" type="number" min="0.1" step="0.1" placeholder="Weight (kg)" required>
-      <button>Add</button>
-    </form>
+      <label>Past sales <small>one per line: date, item, quantity sold</small></label>
+      <textarea id="sales" rows="8" spellcheck="false"></textarea>
 
-    <p id="total">Total wasted: 0 kg</p>
-    <ul id="list"></ul>
+      <label>Menu <small>item | price | ingredient:amount per portion, ...</small></label>
+      <textarea id="menu" rows="6" spellcheck="false"></textarea>
+
+      <label>Inventory <small>ingredient | unit | on hand | days until it expires | cost per unit</small></label>
+      <textarea id="inventory" rows="7" spellcheck="false"></textarea>
+    </section>
+
+    <section class="card">
+      <h2>2. Plan for</h2>
+      <div class="row">
+        <input type="date" id="date">
+        <label class="inline">Safety buffer
+          <input type="number" id="buffer" value="10" min="0" max="50"> %
+        </label>
+        <button id="run">Make plan</button>
+      </div>
+      <p id="error" class="error"></p>
+    </section>
+
+    <section id="results" hidden>
+      <div class="card"><h2>What to prep</h2><div id="prep"></div></div>
+      <div class="card"><h2>What to buy</h2><div id="buy"></div></div>
+      <div class="card"><h2>Waste-risk alerts</h2><div id="alerts"></div></div>
+    </section>
   </main>
+
+  <footer>Forecasts use recent sales on the same weekday, with newer days counting more. It's a starting point; adjust for events, weather and your own judgment.</footer>
   <script src="app.js"></script>
 </body>
 </html>
