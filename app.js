@@ -229,5 +229,104 @@ $('reset').addEventListener('click', () => {
   load();
 });
 
+// ---------- waste log ----------
+const WASTE_KEY = 'kitchen-planner-waste-v1';
+let waste = [];
+try { waste = JSON.parse(localStorage.getItem(WASTE_KEY)) || []; } catch (e) {}
+
+function saveWaste() {
+  try { localStorage.setItem(WASTE_KEY, JSON.stringify(waste)); } catch (e) {}
+}
+
+function currentInventory() {
+  try { return parseInventory($('inventory').value); } catch (e) { return {}; }
+}
+
+function fillIngredients() {
+  const select = $('w-ing');
+  const keep = select.value;
+  select.replaceChildren();
+  Object.values(currentInventory()).forEach((s) => {
+    const o = document.createElement('option');
+    o.value = s.name.toLowerCase();
+    o.textContent = `${s.name} (${s.unit})`;
+    select.append(o);
+  });
+  if (keep) select.value = keep;
+}
+
+function renderWaste() {
+  const inv = currentInventory();
+  const costOf = (w) => w.qty * ((inv[w.ing] && inv[w.ing].cost) || 0);
+  const summary = $('waste-summary');
+  const list = $('waste-list');
+  if (!waste.length) {
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'Nothing logged yet.';
+    summary.replaceChildren(p);
+    list.replaceChildren();
+    return;
+  }
+
+  const byReason = {};
+  waste.forEach((w) => { byReason[w.reason] = (byReason[w.reason] || 0) + costOf(w); });
+  const total = Object.values(byReason).reduce((a, b) => a + b, 0);
+  const max = Math.max(...Object.values(byReason), 1);
+
+  const box = document.createElement('div');
+  const head = document.createElement('p');
+  head.textContent = `Total wasted: ₹${Math.round(total)}`;
+  head.style.fontWeight = '600';
+  box.append(head);
+  Object.entries(byReason).sort((a, b) => b[1] - a[1]).forEach(([reason, val]) => {
+    const row = document.createElement('div');
+    row.className = 'bar';
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = reason;
+    const fill = document.createElement('span');
+    fill.className = 'fill';
+    fill.style.width = Math.max(4, (val / max) * 160) + 'px';
+    const amt = document.createElement('span');
+    amt.textContent = `₹${Math.round(val)}`;
+    row.append(label, fill, amt);
+    box.append(row);
+  });
+  summary.replaceChildren(box);
+
+  const rows = waste.map((w, i) => ({ w, i })).sort((a, b) => b.w.date.localeCompare(a.w.date) || b.i - a.i);
+  const t = table(
+    [['Date'], ['Item'], ['Amount', 1], ['Reason'], ['Cost', 1], ['']],
+    rows.map(({ w }) => {
+      const s = inv[w.ing];
+      return [w.date, s ? s.name : w.ing, `${w.qty} ${s ? s.unit : ''}`, w.reason, `₹${Math.round(costOf(w))}`, ''];
+    })
+  );
+  Array.from(t.tBodies[0].rows).forEach((tr, r) => {
+    const del = document.createElement('button');
+    del.className = 'link';
+    del.textContent = 'remove';
+    del.addEventListener('click', () => { waste.splice(rows[r].i, 1); saveWaste(); renderWaste(); });
+    tr.cells[5].append(del);
+  });
+  list.replaceChildren(t);
+}
+
+$('waste-form').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  waste.push({ date: $('w-date').value, ing: $('w-ing').value, qty: +$('w-qty').value, reason: $('w-reason').value });
+  $('w-qty').value = '';
+  saveWaste();
+  renderWaste();
+});
+$('clear-waste').addEventListener('click', () => {
+  if (waste.length && confirm('Delete all waste log entries?')) { waste = []; saveWaste(); renderWaste(); }
+});
+$('inventory').addEventListener('change', () => { fillIngredients(); renderWaste(); });
+
 load();
 $('date').value = fmtDate(new Date(Date.now() + DAY));
+$('w-date').value = fmtDate(new Date());
+fillIngredients();
+renderWaste();

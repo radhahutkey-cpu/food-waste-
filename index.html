@@ -43,6 +43,27 @@
       <div class="card"><h2>What to buy</h2><div id="buy"></div></div>
       <div class="card"><h2>Waste-risk alerts</h2><div id="alerts"></div></div>
     </section>
+
+    <section class="card">
+      <h2>3. Waste log <button id="clear-waste" class="link">Clear log</button></h2>
+      <p class="muted">Write down food you throw away, and why. Over time this shows where your money goes.</p>
+      <form id="waste-form" class="row">
+        <input type="date" id="w-date" required>
+        <select id="w-ing" required></select>
+        <input type="number" id="w-qty" min="0.01" step="0.01" placeholder="Amount" required>
+        <select id="w-reason">
+          <option>Over-prepared</option>
+          <option>Spoiled / expired</option>
+          <option>Plate waste</option>
+          <option>Kitchen mistake</option>
+          <option>Returned by customer</option>
+          <option>Other</option>
+        </select>
+        <button>Add</button>
+      </form>
+      <div id="waste-summary"></div>
+      <div id="waste-list"></div>
+    </section>
   </main>
 
   <footer>Forecasts use recent sales on the same weekday, with newer days counting more. It's a starting point; adjust for events, weather and your own judgment.</footer>

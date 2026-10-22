@@ -25,4 +25,10 @@ td.num, th.num { text-align: right; }
 .alert.med { background: #fff4e0; border-color: #d98a00; }
 .ok { color: #2e7d32; }
 .muted { color: #7a7467; }
+select { padding: 8px; border: 1px solid #d6cfc0; border-radius: 6px; background: #fff; }
+.bar { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: .9rem; }
+.bar span.label { width: 150px; }
+.bar span.fill { height: 10px; background: #b8620d; border-radius: 5px; display: inline-block; }
+#waste-summary { margin: 12px 0; }
+#waste-list { max-height: 240px; overflow-y: auto; }
 footer { color: #7a7467; font-size: .85rem; padding-bottom: 32px; }
